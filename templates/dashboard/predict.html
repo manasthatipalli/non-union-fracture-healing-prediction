@@ -1,0 +1,29 @@
+{% extends 'dashboard/base_dashboard.html' %}
+
+{% block content %}
+
+<h3>Bone Fracture Detection</h3>
+
+<div class="card p-4 shadow">
+
+<form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+
+    <div class="mb-3">
+        <label>Upload X-ray Image</label>
+        <input type="file" name="image" class="form-control" required>
+    </div>
+
+    <button class="btn btn-primary">Run Prediction</button>
+</form>
+
+{% if result %}
+<div class="alert alert-success mt-4">
+    <p><b>Prediction:</b> {{ result }}</p>
+    <p><b>Confidence:</b> {{ confidence }} %</p>
+</div>
+{% endif %}
+
+</div>
+
+{% endblock %}
