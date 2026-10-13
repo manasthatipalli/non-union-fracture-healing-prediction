@@ -1,4 +1,3 @@
-```python
 from pathlib import Path
 import time
 
@@ -146,4 +145,3 @@ def my_predictions(request):
             "predictions": predictions,
         },
     )
-```
