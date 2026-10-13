@@ -1,102 +1,149 @@
-from django.shortcuts import render
-from django.contrib.auth.decorators import login_required
-from .models import Prediction
-from django.db.models import Count
-
+```python
+from pathlib import Path
 import time
-import numpy as np
+
 import cv2
-import tensorflow as tf
-from tensorflow.keras.models import load_model
+import numpy as np
+from django.conf import settings
+from django.contrib.auth.decorators import login_required
+from django.db.models import Count
+from django.shortcuts import render
 from tensorflow.keras.applications.resnet50 import preprocess_input
+from tensorflow.keras.models import load_model
 
-MODEL_PATH = "model/bone_fracture_resnet50_model.keras"
+from .models import Prediction
 
-model = load_model(MODEL_PATH)
-
+MODEL_PATH = Path(settings.BASE_DIR) / "model" / "bone_fracture_resnet50_model.keras"
 IMG_SIZE = 224
+
+model = None
+
+
+def get_model():
+    global model
+
+    if model is None:
+        model = load_model(MODEL_PATH)
+
+    return model
+
 
 @login_required
 def dashboard_view(request):
-    return render(request, 'dashboard/dashboard.html')
+    return render(request, "dashboard/dashboard.html")
+
 
 @login_required
 def predict_view(request):
-
     result = None
     confidence_score = None
+    inference_time = None
+    error = None
 
     if request.method == "POST":
-
         uploaded_file = request.FILES.get("image")
 
         if uploaded_file:
+            try:
+                file_bytes = np.frombuffer(
+                    uploaded_file.read(),
+                    dtype=np.uint8
+                )
 
-            # Convert uploaded image to OpenCV format
-            file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-            image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                if image is None:
+                    error = "The uploaded file is not a valid image."
+                else:
+                    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                    image = cv2.resize(image, (IMG_SIZE, IMG_SIZE))
+                    image = preprocess_input(image.astype(np.float32))
+                    image = np.expand_dims(image, axis=0)
 
-            image = cv2.resize(image, (IMG_SIZE, IMG_SIZE))
+                    start_time = time.time()
+                    prediction = get_model().predict(image, verbose=0)
+                    inference_time = round(time.time() - start_time, 3)
 
-            image = np.array(image)
+                    confidence = float(prediction[0][0])
 
-            image = preprocess_input(image)
+                    if confidence < 0.5:
+                        predicted_class = "Fractured"
+                        confidence = 1 - confidence
+                    else:
+                        predicted_class = "Not Fractured"
 
-            image = np.expand_dims(image, axis=0)
+                    confidence_score = round(confidence * 100, 2)
+                    result = predicted_class
 
-            start_time = time.time()
+                    uploaded_file.seek(0)
 
-            prediction = model.predict(image)
+                    Prediction.objects.create(
+                        user=request.user,
+                        input_file=uploaded_file,
+                        predicted_class=predicted_class,
+                        confidence=confidence_score
+                    )
+            except Exception:
+                error = "Prediction failed. Please try again or contact the administrator."
 
-            end_time = time.time()
+        else:
+            error = "Please upload an image."
 
-            inference_time = end_time - start_time
+    return render(
+        request,
+        "dashboard/predict.html",
+        {
+            "result": result,
+            "confidence": confidence_score,
+            "inference_time": inference_time,
+            "error": error,
+        },
+    )
 
-            confidence = float(prediction[0][0])
-
-            if confidence < 0.5:
-                predicted_class = "Fractured"
-                confidence = 1 - confidence
-            else:
-                predicted_class = "Not Fractured"
-
-            confidence_score = round(confidence * 100, 2)
-
-            result = predicted_class
-
-            # Save prediction in database
-            Prediction.objects.create(
-                user=request.user,
-                input_file=uploaded_file,
-                predicted_class=predicted_class,
-                confidence=confidence_score
-            )
-
-    return render(request, "dashboard/predict.html", {
-        "result": result,
-        "confidence": confidence_score
-    })
 
 @login_required
 def history_view(request):
     qs = Prediction.objects.filter(user=request.user)
 
-    # Count per class
-    class_counts = qs.values('predicted_class').annotate(count=Count('id'))
+    class_counts = qs.values("predicted_class").annotate(
+        count=Count("id")
+    )
 
-    labels = [item['predicted_class'] for item in class_counts]
-    data = [item['count'] for item in class_counts]
+    labels = [item["predicted_class"] for item in class_counts]
+    data = [item["count"] for item in class_counts]
 
-    return render(request, 'dashboard/history.html', {'labels': labels,'data': data,})
+    return render(
+        request,
+        "dashboard/history.html",
+        {
+            "labels": labels,
+            "data": data,
+        },
+    )
+
 
 @login_required
 def profile_page(request):
     profile = request.user.profile
-    return render(request, 'dashboard/profile.html', {'profile': profile})
+
+    return render(
+        request,
+        "dashboard/profile.html",
+        {
+            "profile": profile,
+        },
+    )
+
 
 @login_required
 def my_predictions(request):
     predictions = Prediction.objects.filter(user=request.user)
-    return render(request, 'dashboard/my_predictions.html', {'predictions': predictions})
+
+    return render(
+        request,
+        "dashboard/my_predictions.html",
+        {
+            "predictions": predictions,
+        },
+    )
+```
